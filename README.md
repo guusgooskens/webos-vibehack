@@ -98,7 +98,8 @@ saved on the TV.
 
 **Configure** in [`app/config.js`](app/config.js): the starting dock, apps to hide, the Live TV
 app and the number of columns. App ids come from `venv/bin/python sync-apps.py $TV_HOST --list`.
-Changing `dockApps` resets an order arranged on the TV.
+Changing dock or priority apps moves them up while keeping the saved order of other tiles;
+`deprioritizedApps` moves selected tiles after the rest.
 
 ## Cleaning up LG's home
 

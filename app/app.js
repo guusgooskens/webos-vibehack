@@ -84,31 +84,62 @@
     (CONFIG.hiddenApps || []).forEach(function (id) { hidden[id] = true; });
     var byTitle = function (a, b) { return a.title.toLowerCase() < b.title.toLowerCase() ? -1 : 1; };
 
-    // An order arranged on the TV wins, until dockApps in config.js changes.
+    // A saved TV order wins until the configured priorities change.
     var saved = loadOrder();
     if (saved) {
       var placed = [];
-      saved.forEach(function (id) {
+      var preferred = (CONFIG.dockApps || []).concat(CONFIG.priorityApps || []);
+      preferred.forEach(function (id) {
         if (byId[id] && !hidden[id]) { placed.push(byId[id]); hidden[id] = true; }
+      });
+      var deprioritized = {};
+      (CONFIG.deprioritizedApps || []).forEach(function (id) { deprioritized[id] = true; });
+      saved.forEach(function (id) {
+        if (byId[id] && !hidden[id] && !deprioritized[id]) { placed.push(byId[id]); hidden[id] = true; }
+      });
+      saved.forEach(function (id) {
+        if (byId[id] && !hidden[id] && deprioritized[id]) { placed.push(byId[id]); hidden[id] = true; }
       });
       return placed.concat(all.filter(function (a) { return !hidden[a.id]; }).sort(byTitle));
     }
 
-    var dock = [];
-    (CONFIG.dockApps || []).forEach(function (id) {
-      if (byId[id] && !hidden[id] && dock.length < COLUMNS) { dock.push(byId[id]); hidden[id] = true; }
+    var preferred = [];
+    (CONFIG.dockApps || []).concat(CONFIG.priorityApps || []).forEach(function (id) {
+      if (byId[id] && !hidden[id]) { preferred.push(byId[id]); hidden[id] = true; }
     });
+    var deprioritized = {};
+    (CONFIG.deprioritizedApps || []).forEach(function (id) { deprioritized[id] = true; });
+    var movedOut = all.filter(function (a) { return !hidden[a.id] && deprioritized[a.id]; });
+    movedOut.forEach(function (a) { hidden[a.id] = true; });
     var rest = all.filter(function (a) { return !hidden[a.id]; });
     rest.sort(byTitle);
-    return dock.concat(rest);
+    movedOut.sort(byTitle);
+    return preferred.concat(rest, movedOut);
   }
 
   var ORDER_KEY = 'tvhome.order';
 
+  function orderSignature() {
+    return (CONFIG.dockApps || []).join(',') + '|' + (CONFIG.priorityApps || []).join(',');
+  }
+
   function loadOrder() {
     try {
       var s = JSON.parse(localStorage.getItem(ORDER_KEY));
-      return s && s.dock === (CONFIG.dockApps || []).join(',') ? s.ids : null;
+      if (!s || !Array.isArray(s.ids)) return null;
+      var preferred = (CONFIG.dockApps || []).concat(CONFIG.priorityApps || []);
+      if (s.dock === orderSignature()) return s.ids;
+
+      // Apply changed priorities while keeping the saved order of the other tiles.
+      var deprioritized = {};
+      (CONFIG.deprioritizedApps || []).forEach(function (id) { deprioritized[id] = true; });
+      var rest = s.ids.filter(function (id) {
+        return preferred.indexOf(id) === -1 && !deprioritized[id];
+      });
+      var movedOut = s.ids.filter(function (id) {
+        return preferred.indexOf(id) === -1 && deprioritized[id];
+      });
+      return preferred.concat(rest, movedOut);
     } catch (e) {
       return null;
     }
@@ -117,7 +148,7 @@
   function saveOrder() {
     try {
       localStorage.setItem(ORDER_KEY, JSON.stringify({
-        dock: (CONFIG.dockApps || []).join(','),
+        dock: orderSignature(),
         ids: items.map(function (it) { return it.app.id; })
       }));
     } catch (e) { /* storage unavailable: the order lasts until the app restarts */ }
@@ -527,6 +558,7 @@
 
   var LONG_PRESS_MS = 600;
   var okDown = false, okTimer = null;
+  var backHandledOnKeydown = false;
 
   // On tiles OK acts on release, so a held OK can start rearranging instead of opening the app.
   document.addEventListener('keyup', function (e) {
@@ -541,6 +573,7 @@
 
   document.addEventListener('keydown', function (e) {
     var k = e.keyCode;
+    if (k === KEY.BACK) backHandledOnKeydown = true;
     if (k === KEY.OK && okDown) { e.preventDefault(); return; }   // key repeat while held
     if (k === KEY.OK) okDown = true;
     if (editing) {
@@ -580,6 +613,19 @@
     }
     e.preventDefault();
   });
+
+  // Some webOS versions deliver Back on key release instead of keydown. Consume that event too,
+  // or the platform exits the launcher to LG Home before the no-op Back behavior can take effect.
+  window.addEventListener('keyup', function (e) {
+    if (e.keyCode !== KEY.BACK) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!backHandledOnKeydown) {
+      if (editing) finishEdit(false);
+      else if (zone === 'inputs') hideInputs();
+    }
+    backHandledOnKeydown = false;
+  }, true);
 
   pills.forEach(function (p, i) {
     p.addEventListener('mouseover', function () { if (zone !== 'inputs') focusPill(i); });
